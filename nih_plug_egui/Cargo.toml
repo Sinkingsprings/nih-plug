@@ -18,7 +18,7 @@ rayon = ["egui-baseview/rayon"]
 [dependencies]
 nih_plug = { path = "..", default-features = false }
 raw-window-handle = "0.5"
-baseview = { git = "https://github.com/audio-forge-rs/baseview.git", branch = "fix-null-window-crash" }
+baseview = { git = "https://github.com/Sinkingsprings/baseview.git", branch = "fix-null-window-crash" }
 crossbeam = "0.8"
 egui-baseview = { git = "https://github.com/audio-forge-rs/egui-baseview.git", branch = "fix-null-window-crash" }
 parking_lot = "0.12"
