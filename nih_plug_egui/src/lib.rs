@@ -113,7 +113,9 @@ impl EguiState {
     }
 
     /// Set the new size that will be used to resize the window if the host allows.
-    fn set_requested_size(&self, new_size: (u32, u32)) {
-        self.requested_size.store(Some(new_size));
+    /// The editor's update loop will call `request_resize` on the host on the
+    /// next frame and, if accepted, apply the new size to the embedded surface.
+    pub fn set_requested_size(&self, width: u32, height: u32) {
+        self.requested_size.store(Some((width, height)));
     }
 }

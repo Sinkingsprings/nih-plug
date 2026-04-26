@@ -51,10 +51,10 @@ impl ResizableWindow {
                     .max(self.min_size);
 
                 if corner_response.dragged() {
-                    egui_state.set_requested_size((
+                    egui_state.set_requested_size(
                         desired_size.x.round() as u32,
                         desired_size.y.round() as u32,
-                    ));
+                    );
                 }
             }
 
