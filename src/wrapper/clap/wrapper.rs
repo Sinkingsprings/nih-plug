@@ -2910,38 +2910,41 @@ impl<P: ClapPlugin> Wrapper<P> {
 
         let result = {
             let mut editor_handle = wrapper.editor_handle.lock();
-            if editor_handle.is_none() {
-                let api = CStr::from_ptr(window.api);
-                let parent_handle = if api == CLAP_WINDOW_API_X11 {
-                    ParentWindowHandle::X11Window(window.specific.x11 as u32)
-                } else if api == CLAP_WINDOW_API_COCOA {
-                    ParentWindowHandle::AppKitNsView(window.specific.cocoa)
-                } else if api == CLAP_WINDOW_API_WIN32 {
-                    ParentWindowHandle::Win32Hwnd(window.specific.win32)
-                } else {
-                    nih_debug_assert_failure!("Host passed an invalid API");
-                    return false;
-                };
 
-                // This extension is only exposed when we have an editor
-                *editor_handle = Some(
-                    wrapper
-                        .editor
-                        .borrow()
-                        .as_ref()
-                        .unwrap()
-                        .lock()
-                        .spawn(parent_handle, wrapper.clone().make_gui_context()),
-                );
-
-                true
+            let api = CStr::from_ptr(window.api);
+            let parent_handle = if api == CLAP_WINDOW_API_X11 {
+                ParentWindowHandle::X11Window(window.specific.x11 as u32)
+            } else if api == CLAP_WINDOW_API_COCOA {
+                ParentWindowHandle::AppKitNsView(window.specific.cocoa)
+            } else if api == CLAP_WINDOW_API_WIN32 {
+                ParentWindowHandle::Win32Hwnd(window.specific.win32)
             } else {
-                nih_debug_assert_failure!(
-                    "Host tried to attach editor while the editor is already attached"
-                );
+                nih_debug_assert_failure!("Host passed an invalid API");
+                return false;
+            };
 
-                false
+            // Drop any existing handle before spawning. This handles two cases:
+            // 1. The window thread exited unexpectedly (user clicked X, POLLERR)
+            //    leaving a stale handle; we need to clean up before respawning.
+            // 2. Normal first-open where the handle is already None (no-op drop).
+            // Without this, a stale Some handle would cause the spawn to be skipped
+            // and the GUI to never reopen.
+            if editor_handle.is_some() {
+                *editor_handle = None;
             }
+
+            // This extension is only exposed when we have an editor
+            *editor_handle = Some(
+                wrapper
+                    .editor
+                    .borrow()
+                    .as_ref()
+                    .unwrap()
+                    .lock()
+                    .spawn(parent_handle, wrapper.clone().make_gui_context()),
+            );
+
+            true
         };
 
         // Leak the Arc again since we only needed a clone to pass to the GuiContext
