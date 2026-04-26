@@ -125,9 +125,6 @@ pub struct Wrapper<P: ClapPlugin> {
     /// A handle for the currently active editor instance. The plugin should implement `Drop` on
     /// this handle for its closing behavior.
     editor_handle: Mutex<Option<Box<dyn Any + Send>>>,
-    /// Stored parent window handle for reopening after ext_gui_hide().
-    /// Encoded as (variant_tag, raw_value): 0=X11Window, 1=AppKitNsView, 2=Win32Hwnd.
-    parent_handle_for_show: Mutex<Option<(u8, usize)>>,
     /// The DPI scaling factor as passed to the [IPlugViewContentScaleSupport::set_scale_factor()]
     /// function. Defaults to 1.0, and will be kept there on macOS. When reporting and handling size
     /// the sizes communicated to and from the DAW should be scaled by this factor since NIH-plug's
@@ -558,7 +555,6 @@ impl<P: ClapPlugin> Wrapper<P> {
             // Initialized later as it needs a reference to the wrapper for the async executor
             editor: AtomicRefCell::new(None),
             editor_handle: Mutex::new(None),
-            parent_handle_for_show: Mutex::new(None),
             editor_scaling_factor: AtomicF32::new(1.0),
 
             is_processing: AtomicBool::new(false),
@@ -2927,13 +2923,6 @@ impl<P: ClapPlugin> Wrapper<P> {
                     return false;
                 };
 
-                // Store the raw handle so ext_gui_show() can respawn after ext_gui_hide().
-                *wrapper.parent_handle_for_show.lock() = Some(match parent_handle {
-                    ParentWindowHandle::X11Window(n)      => (0u8, n as usize),
-                    ParentWindowHandle::AppKitNsView(ptr) => (1u8, ptr as usize),
-                    ParentWindowHandle::Win32Hwnd(ptr)    => (2u8, ptr as usize),
-                });
-
                 // This extension is only exposed when we have an editor
                 *editor_handle = Some(
                     wrapper
@@ -2975,55 +2964,24 @@ impl<P: ClapPlugin> Wrapper<P> {
 
     unsafe extern "C" fn ext_gui_show(plugin: *const clap_plugin) -> bool {
         check_null_ptr!(false, plugin, (*plugin).plugin_data);
-        // Need the Arc so we can clone it into the GuiContext below.
-        let wrapper = Arc::from_raw((*plugin).plugin_data as *const Self);
-
-        let result = {
-            let mut editor_handle = wrapper.editor_handle.lock();
-            if editor_handle.is_some() {
-                // Already open, nothing to do.
-                true
-            } else {
-                let raw = *wrapper.parent_handle_for_show.lock();
-                if let Some((tag, value)) = raw {
-                    let parent_handle = match tag {
-                        0 => ParentWindowHandle::X11Window(value as u32),
-                        1 => ParentWindowHandle::AppKitNsView(value as *mut c_void),
-                        _ => ParentWindowHandle::Win32Hwnd(value as *mut c_void),
-                    };
-                    *editor_handle = Some(
-                        wrapper
-                            .editor
-                            .borrow()
-                            .as_ref()
-                            .unwrap()
-                            .lock()
-                            .spawn(parent_handle, wrapper.clone().make_gui_context()),
-                    );
-                    true
-                } else {
-                    false
-                }
-            }
-        };
-
-        let _ = Arc::into_raw(wrapper);
-        result
+        let wrapper = &*((*plugin).plugin_data as *const Self);
+        // The window is either alive (editor_handle is Some) or has never been created.
+        // Creation happens in set_parent(); destruction in destroy(). We don't spawn here
+        // because spawning can panic if the X11 parent handle is stale, which would abort
+        // across the FFI boundary. The X11 parent/child relationship makes the child window
+        // visible/invisible as Bitwig shows/hides its panel — no explicit action needed.
+        wrapper.editor_handle.lock().is_some()
     }
 
     unsafe extern "C" fn ext_gui_hide(plugin: *const clap_plugin) -> bool {
         check_null_ptr!(false, plugin, (*plugin).plugin_data);
         let wrapper = &*((*plugin).plugin_data as *const Self);
-
-        let mut editor_handle = wrapper.editor_handle.lock();
-        if editor_handle.is_some() {
-            // Dropping the handle calls EguiEditorHandle::drop(), which signals the
-            // baseview window thread to close and marks egui_state.open = false.
-            *editor_handle = None;
-            true
-        } else {
-            false
-        }
+        // The window stays alive — the host hides its panel which hides the embedded child
+        // window automatically via the X11/Cocoa/Win32 parent–child relationship.
+        // Return true whenever we have a live window so the host tracks state correctly,
+        // which ensures it calls destroy() (not a second hide()) when it truly wants to
+        // remove the GUI, and set_parent() + show() when it wants to reopen.
+        wrapper.editor_handle.lock().is_some()
     }
 
     unsafe extern "C" fn ext_latency_get(plugin: *const clap_plugin) -> u32 {
