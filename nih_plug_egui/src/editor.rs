@@ -104,7 +104,15 @@ where
                     samples: None,
                     srgb: true,
                     double_buffer: true,
-                    vsync: true,
+                    // vsync: false. Enabling vsync makes Mesa's GLX SwapBuffers
+                    // call xcb_wait_for_special_event waiting for a Present-
+                    // complete event. If the host destroys the parent window
+                    // mid-frame (e.g. Bitwig closing the plugin panel), that
+                    // event never fires and the window thread wedges forever
+                    // inside Mesa, holding xcb internals. The next spawn then
+                    // deadlocks on the shared libxcb state. Plugin GUIs don't
+                    // need true vsync — the host throttles frames anyway.
+                    vsync: false,
                     ..Default::default()
                 }),
             },
